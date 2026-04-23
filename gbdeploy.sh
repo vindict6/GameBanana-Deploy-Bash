@@ -19,6 +19,16 @@ if ! command -v 7zz &> /dev/null && ! command -v 7z &> /dev/null; then
     exit 1
 fi
 
+# 'unrar' is optional but strongly recommended: p7zip cannot decode several
+# RAR compression methods (older RAR3 variants, RAR5 with certain flags), which
+# shows up on GameBanana as "ERROR: Unsupported Method" during extraction.
+# If unrar is missing we fall back to 7z and warn the user only when we hit a
+# .rar archive we can't handle.
+if ! command -v unrar &> /dev/null; then
+    echo -e "\033[0;33m [!] Notice: 'unrar' is not installed. Some .rar downloads may fail to extract.\033[0m"
+    echo -e "     Install it with: sudo apt install unrar   (or: sudo pacman -S unrar)"
+fi
+
 # ==========================================
 # CONFIGURATION & THEME
 # ==========================================
@@ -113,6 +123,58 @@ format_bytes() {
     elif [ "$b" -ge 1024 ];       then awk -v x="$b" 'BEGIN{printf "%.1f KB", x/1024}'
     else echo "$b B"
     fi
+}
+
+# Extract an archive into a destination directory.
+# Handles .rar via 'unrar' (p7zip can't decode several RAR compression methods
+# that commonly appear on GameBanana) and falls back to 7z for everything else.
+# Returns 0 on success, non-zero on failure.
+extract_archive() {
+    local ARCHIVE="$1"
+    local DEST="$2"
+    local LOG
+    LOG=$(mktemp)
+
+    local SEVENZ=""
+    if   command -v 7zz &> /dev/null; then SEVENZ=7zz
+    elif command -v 7z  &> /dev/null; then SEVENZ=7z
+    fi
+
+    local lower="${ARCHIVE,,}"
+    local rc=1
+
+    if [[ "$lower" == *.rar ]]; then
+        if command -v unrar &> /dev/null; then
+            # -o+ overwrite, -y yes-to-all, x preserves paths.
+            unrar x -o+ -y -- "$ARCHIVE" "$DEST/" > "$LOG" 2>&1
+            rc=$?
+        elif [ -n "$SEVENZ" ]; then
+            echo -e " \033[1;33m[!]\033[0m 'unrar' not installed; attempting 7z fallback (may fail on some RAR methods)."
+            "$SEVENZ" x "$ARCHIVE" -o"$DEST" -y > "$LOG" 2>&1
+            rc=$?
+            # 7z may emit partial-success output containing "Unsupported Method".
+            if [ "$rc" -eq 0 ] && grep -q "Unsupported Method" "$LOG"; then
+                rc=2
+            fi
+            if [ "$rc" -ne 0 ]; then
+                echo -e " \033[1;31m[x]\033[0m 7z could not fully extract this RAR. Install 'unrar' and retry."
+                echo -e "     sudo apt install unrar   (or: sudo pacman -S unrar)"
+            fi
+        fi
+    else
+        if [ -n "$SEVENZ" ]; then
+            "$SEVENZ" x "$ARCHIVE" -o"$DEST" -y > "$LOG" 2>&1
+            rc=$?
+        fi
+    fi
+
+    if [ "$rc" -ne 0 ]; then
+        echo -e " \033[0;37m----- extractor output -----\033[0m"
+        tail -n 20 "$LOG" | sed 's/^/     /'
+        echo -e " \033[0;37m----------------------------\033[0m"
+    fi
+    rm -f "$LOG"
+    return "$rc"
 }
 
 # ==========================================
@@ -213,9 +275,7 @@ install_item() {
     fi
 
     echo -e " \033[1;33m[⚙]\033[0m Extracting files..."
-    local SEVENZ
-    if command -v 7zz &> /dev/null; then SEVENZ=7zz; else SEVENZ=7z; fi
-    if ! "$SEVENZ" x "$DL_TMP_DIR/$SELECTED_FILE" -o"$EXTRACT_TMP_DIR" -y > /dev/null; then
+    if ! extract_archive "$DL_TMP_DIR/$SELECTED_FILE" "$EXTRACT_TMP_DIR"; then
         echo -e " \033[1;31m[x] Extraction failed.\033[0m"
         rm -rf "$DL_TMP_DIR" "$EXTRACT_TMP_DIR"
         sleep 3; return
