@@ -1,6 +1,7 @@
 # GameBanana Deployment Suite
 
-A robust, terminal-based package manager and deployment suite for [GameBanana](https://gamebanana.com/). Written in Bash and utilizing `whiptail` for an intuitive TUI (Text User Interface), this tool allows you to seamlessly search, download, install, and manage mods and maps for thousands of games directly from your command line.
+A terminal-based package manager and deployment suite for [GameBanana](https://gamebanana.com/). Written in Bash and utilizing `whiptail` for an intuitive TUI (Text User Interface).
+This tool allows you to search, download, install, and manage mods and maps for thousands of games directly from your Linux CLI.
 
 © 2026 BONE
 
