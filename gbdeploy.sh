@@ -14,23 +14,17 @@ for cmd in curl jq tr awk sed find whiptail xargs; do
     fi
 done
 
-# 7-Zip is required. Prefer '7zz' (7-Zip 21.02+), which natively handles RAR5
-# and the newer compression methods that legacy p7zip ('7z') cannot decode and
-# reports as "ERROR: Unsupported Method" on many GameBanana uploads.
-if ! command -v 7zz &> /dev/null; then
-    if command -v 7z &> /dev/null; then
-        echo -e "\033[0;33m [!] Notice: Only legacy '7z' (p7zip) found.\033[0m"
-        echo -e "     Some .rar downloads use compression methods p7zip cannot decode."
-        echo -e "     Install a modern 7-Zip build to fix this:"
-        echo -e "       Debian/Ubuntu: sudo apt install 7zip        (provides '7zz')"
-        echo -e "       Arch:          sudo pacman -S 7zip          (provides '7zz')"
-        echo -e "       Fedora:        sudo dnf install 7zip        (provides '7zz')"
-        echo -e "       Manual:        https://www.7-zip.org/download.html"
-        echo
-    else
-        echo -e "\033[0;31m [!] Error: 7-Zip is not installed. Please install the '7zip' package (provides '7zz').\033[0m"
-        exit 1
-    fi
+# 'unar' (The Unarchiver) handles all archive extraction. Unlike p7zip, unar
+# decodes the modern codecs commonly used by GameBanana uploads (RAR5 v6/v7,
+# zstd-compressed zips, Deflate64, LZFSE, etc.) out of the box. It's free
+# software and ships in Debian main.
+if ! command -v unar &> /dev/null; then
+    echo -e "\033[0;31m [!] Error: 'unar' (The Unarchiver) is not installed.\033[0m"
+    echo -e "     Install it with:"
+    echo -e "       Debian/Ubuntu: sudo apt install unar"
+    echo -e "       Arch:          sudo pacman -S unarchiver"
+    echo -e "       Fedora:        sudo dnf install unar"
+    exit 1
 fi
 
 # ==========================================
@@ -129,10 +123,10 @@ format_bytes() {
     fi
 }
 
-# Extract an archive into a destination directory using a modern 7-Zip build.
-# Prefers '7zz' (7-Zip 21.02+) which handles RAR, RAR5, zip, 7z, tar.*, etc.
-# natively. Falls back to legacy '7z' (p7zip) only if 7zz is unavailable; this
-# fallback cannot decode several RAR methods commonly found on GameBanana.
+# Extract an archive into a destination directory using unar (The Unarchiver).
+# unar supports every format we care about (zip, rar, 7z, tar.*, etc.) and,
+# unlike p7zip, decodes modern codecs that GameBanana uploads frequently use
+# (RAR5 v6/v7 m3, zstd-in-zip, Deflate64, LZFSE).
 # Returns 0 on success, non-zero on failure.
 extract_archive() {
     local ARCHIVE="$1"
@@ -140,26 +134,12 @@ extract_archive() {
     local LOG
     LOG=$(mktemp)
 
-    local SEVENZ=""
-    if   command -v 7zz &> /dev/null; then SEVENZ=7zz
-    elif command -v 7z  &> /dev/null; then SEVENZ=7z
-    fi
-
-    local rc=1
-    if [ -n "$SEVENZ" ]; then
-        "$SEVENZ" x "$ARCHIVE" -o"$DEST" -y > "$LOG" 2>&1
-        rc=$?
-        # 7-Zip can return 0 even when individual entries failed with
-        # "Unsupported Method" - treat that as a failure so we surface it.
-        if [ "$rc" -eq 0 ] && grep -q "Unsupported Method" "$LOG"; then
-            rc=2
-            echo -e " \033[1;31m[x]\033[0m Your 7-Zip can't decode this archive's compression method."
-            echo -e "     Install a modern 7-Zip build (provides the '7zz' command):"
-            echo -e "       Debian/Ubuntu: sudo apt install 7zip"
-            echo -e "       Arch:          sudo pacman -S 7zip"
-            echo -e "       Fedora:        sudo dnf install 7zip"
-        fi
-    fi
+    # -o DEST : output directory
+    # -f      : overwrite existing files
+    # -q      : quieter output
+    # -D      : don't create an enclosing wrapper dir for single-root archives
+    unar -q -f -D -o "$DEST" "$ARCHIVE" > "$LOG" 2>&1
+    local rc=$?
 
     if [ "$rc" -ne 0 ]; then
         echo -e " \033[0;37m----- extractor output -----\033[0m"
@@ -443,15 +423,19 @@ menu_search() {
 }
 
 menu_url() {
-    GB_URL=$(whiptail --backtitle "$BACKTITLE" --title " Install from URL " --inputbox "\nPaste the full GameBanana URL:" 14 75 3>&1 1>&2 2>&3)
-    if [ $? -ne 0 ] || [ -z "$GB_URL" ]; then return; fi
+    # Loop so the user can install URL after URL without diving back through
+    # the main menu. Cancel/empty input returns to the caller.
+    while true; do
+        GB_URL=$(whiptail --backtitle "$BACKTITLE" --title " Install from URL " --inputbox "\nPaste the full GameBanana URL:\n(Leave blank or cancel to go back.)" 14 75 3>&1 1>&2 2>&3)
+        if [ $? -ne 0 ] || [ -z "$GB_URL" ]; then return; fi
 
-    if [[ ! "$GB_URL" =~ gamebanana\.com/([a-zA-Z]+)/([0-9]+) ]]; then
-        pause_msg "Invalid URL format."
-        return
-    fi
-    local ITEM_TYPE=$(echo "${BASH_REMATCH[1]}" | sed 's/s$//' | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')
-    install_item "$ITEM_TYPE" "${BASH_REMATCH[2]}" "$GB_URL"
+        if [[ ! "$GB_URL" =~ gamebanana\.com/([a-zA-Z]+)/([0-9]+) ]]; then
+            pause_msg "Invalid URL format."
+            continue
+        fi
+        local ITEM_TYPE=$(echo "${BASH_REMATCH[1]}" | sed 's/s$//' | awk '{print toupper(substr($0,1,1)) tolower(substr($0,2))}')
+        install_item "$ITEM_TYPE" "${BASH_REMATCH[2]}" "$GB_URL"
+    done
 }
 
 # ==========================================
