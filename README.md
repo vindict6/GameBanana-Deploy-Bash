@@ -22,8 +22,7 @@ Make sure the following are installed on your system:
 * `curl` (for API requests and downloading files)
 * `jq` (for parsing JSON responses)
 * `whiptail` (for the interactive menu UI)
-* `7z` or `7zz` (7-Zip, for extracting downloaded `.zip`, `.rar`, and `.7z` files)
-* `unrar` for RAR compression
+* `7zip`, `7z` or `7zz` (7-Zip, for extracting downloaded `.zip`, `.rar`, and `.7z` files)
 * Standard GNU coreutils (`tr`, `awk`, `sed`, `find`)
 
 **Debian / Ubuntu Installation:**
