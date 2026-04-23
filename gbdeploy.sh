@@ -14,19 +14,23 @@ for cmd in curl jq tr awk sed find whiptail xargs; do
     fi
 done
 
-if ! command -v 7zz &> /dev/null && ! command -v 7z &> /dev/null; then
-    echo -e "\033[0;31m [!] Error: 7-Zip is not installed. Please install '7zip' or 'p7zip-full'.\033[0m"
-    exit 1
-fi
-
-# 'unrar' is optional but strongly recommended: p7zip cannot decode several
-# RAR compression methods (older RAR3 variants, RAR5 with certain flags), which
-# shows up on GameBanana as "ERROR: Unsupported Method" during extraction.
-# If unrar is missing we fall back to 7z and warn the user only when we hit a
-# .rar archive we can't handle.
-if ! command -v unrar &> /dev/null; then
-    echo -e "\033[0;33m [!] Notice: 'unrar' is not installed. Some .rar downloads may fail to extract.\033[0m"
-    echo -e "     Install it with: sudo apt install unrar   (or: sudo pacman -S unrar)"
+# 7-Zip is required. Prefer '7zz' (7-Zip 21.02+), which natively handles RAR5
+# and the newer compression methods that legacy p7zip ('7z') cannot decode and
+# reports as "ERROR: Unsupported Method" on many GameBanana uploads.
+if ! command -v 7zz &> /dev/null; then
+    if command -v 7z &> /dev/null; then
+        echo -e "\033[0;33m [!] Notice: Only legacy '7z' (p7zip) found.\033[0m"
+        echo -e "     Some .rar downloads use compression methods p7zip cannot decode."
+        echo -e "     Install a modern 7-Zip build to fix this:"
+        echo -e "       Debian/Ubuntu: sudo apt install 7zip        (provides '7zz')"
+        echo -e "       Arch:          sudo pacman -S 7zip          (provides '7zz')"
+        echo -e "       Fedora:        sudo dnf install 7zip        (provides '7zz')"
+        echo -e "       Manual:        https://www.7-zip.org/download.html"
+        echo
+    else
+        echo -e "\033[0;31m [!] Error: 7-Zip is not installed. Please install the '7zip' package (provides '7zz').\033[0m"
+        exit 1
+    fi
 fi
 
 # ==========================================
@@ -125,9 +129,10 @@ format_bytes() {
     fi
 }
 
-# Extract an archive into a destination directory.
-# Handles .rar via 'unrar' (p7zip can't decode several RAR compression methods
-# that commonly appear on GameBanana) and falls back to 7z for everything else.
+# Extract an archive into a destination directory using a modern 7-Zip build.
+# Prefers '7zz' (7-Zip 21.02+) which handles RAR, RAR5, zip, 7z, tar.*, etc.
+# natively. Falls back to legacy '7z' (p7zip) only if 7zz is unavailable; this
+# fallback cannot decode several RAR methods commonly found on GameBanana.
 # Returns 0 on success, non-zero on failure.
 extract_archive() {
     local ARCHIVE="$1"
@@ -140,31 +145,19 @@ extract_archive() {
     elif command -v 7z  &> /dev/null; then SEVENZ=7z
     fi
 
-    local lower="${ARCHIVE,,}"
     local rc=1
-
-    if [[ "$lower" == *.rar ]]; then
-        if command -v unrar &> /dev/null; then
-            # -o+ overwrite, -y yes-to-all, x preserves paths.
-            unrar x -o+ -y -- "$ARCHIVE" "$DEST/" > "$LOG" 2>&1
-            rc=$?
-        elif [ -n "$SEVENZ" ]; then
-            echo -e " \033[1;33m[!]\033[0m 'unrar' not installed; attempting 7z fallback (may fail on some RAR methods)."
-            "$SEVENZ" x "$ARCHIVE" -o"$DEST" -y > "$LOG" 2>&1
-            rc=$?
-            # 7z may emit partial-success output containing "Unsupported Method".
-            if [ "$rc" -eq 0 ] && grep -q "Unsupported Method" "$LOG"; then
-                rc=2
-            fi
-            if [ "$rc" -ne 0 ]; then
-                echo -e " \033[1;31m[x]\033[0m 7z could not fully extract this RAR. Install 'unrar' and retry."
-                echo -e "     sudo apt install unrar   (or: sudo pacman -S unrar)"
-            fi
-        fi
-    else
-        if [ -n "$SEVENZ" ]; then
-            "$SEVENZ" x "$ARCHIVE" -o"$DEST" -y > "$LOG" 2>&1
-            rc=$?
+    if [ -n "$SEVENZ" ]; then
+        "$SEVENZ" x "$ARCHIVE" -o"$DEST" -y > "$LOG" 2>&1
+        rc=$?
+        # 7-Zip can return 0 even when individual entries failed with
+        # "Unsupported Method" - treat that as a failure so we surface it.
+        if [ "$rc" -eq 0 ] && grep -q "Unsupported Method" "$LOG"; then
+            rc=2
+            echo -e " \033[1;31m[x]\033[0m Your 7-Zip can't decode this archive's compression method."
+            echo -e "     Install a modern 7-Zip build (provides the '7zz' command):"
+            echo -e "       Debian/Ubuntu: sudo apt install 7zip"
+            echo -e "       Arch:          sudo pacman -S 7zip"
+            echo -e "       Fedora:        sudo dnf install 7zip"
         fi
     fi
 
